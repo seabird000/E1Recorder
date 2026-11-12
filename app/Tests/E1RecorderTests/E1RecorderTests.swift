@@ -103,6 +103,26 @@ final class MarkdownExportTests: XCTestCase {
         XCTAssertTrue(html.contains("<blockquote>时间可能不准</blockquote>"))
     }
 
+    func testPageAndWordLayouts() {
+        let md = """
+        - **会议时间：** 12:46
+        - **参会人员：** 张三、李四
+
+        ## 待办事项
+
+        - [ ] 发通知
+        - [x] 订场地
+        """
+        let page = MarkdownHTML.body(md, layout: .page)
+        XCTAssertTrue(page.contains("<td class=\"k\">会议时间</td><td class=\"v\">12:46</td>"))     // details become two columns
+        XCTAssertTrue(page.contains("<p class=\"task\">☐ 发通知</p>") && page.contains("<p class=\"task\">☑ 订场地</p>"))
+        XCTAssertTrue(page.contains("<table class=\"h2\""))
+        let word = MarkdownHTML.body(md, layout: .word)
+        XCTAssertFalse(word.contains("<table"))                 // the .docx writer leaves tables out
+        XCTAssertTrue(word.contains("<span>会议时间</span>") && word.contains("<h2>待办事项</h2>"))
+        XCTAssertTrue(MarkdownHTML.body(md).contains("<li><b>会议时间：</b> 12:46</li>"))     // plain output stays semantic
+    }
+
     func testEscapesHTML() {
         XCTAssertEqual(MarkdownHTML.inline("a < b & c"), "a &lt; b &amp; c")
     }
