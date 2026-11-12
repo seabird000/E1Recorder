@@ -143,6 +143,15 @@ final class WifiAndRetryTests: XCTestCase {
         XCTAssertFalse(status(beat: nil, secondsAgo: 700).isOnline)
     }
 
+    func testHeartbeatReadPace() {
+        XCTAssertEqual(Pipeline.heartbeatReadInterval(online: false, failed: false), 10)   // away: notice it coming back
+        XCTAssertEqual(Pipeline.heartbeatReadInterval(online: true, failed: false), 30)    // online: beats are 2 minutes apart
+        XCTAssertEqual(Pipeline.heartbeatReadInterval(online: false, failed: true), 60)    // no network: don't hammer
+        XCTAssertEqual(Pipeline.heartbeatReadInterval(online: true, failed: true), 60)
+        // 30 s must stay well inside the online window, or a pen that is beating would flicker to offline
+        XCTAssertLessThan(Pipeline.heartbeatReadInterval(online: true, failed: false), status(beat: 120, secondsAgo: 0).offlineAfter - 120)
+    }
+
     @MainActor func testTransientErrors() {
         XCTAssertTrue(Pipeline.isTransient(URLError(.notConnectedToInternet)))
         XCTAssertTrue(Pipeline.isTransient(AppError("busy", transient: true)))

@@ -254,34 +254,76 @@ final class Pipeline: ObservableObject {
         }
     }
 
-    /// The WiFi mailbox on its own schedule. While a sync is busy downloading a long recording, the heartbeat is
-    /// still re-read every minute so the pen doesn't look offline just because this Mac is busy.
+    /// The WiFi mailbox on its own schedule (「WiFi 检查」), and the heartbeat on a quicker one of its own: the
+    /// status icons should turn green soon after the pen wakes up whatever the mailbox interval is, and must not
+    /// go grey between two mailbox checks or while this Mac is busy downloading a long recording.
     func wifiLoop() async {
         while true {
             if !UIPreview.enabled {
-                if wifiSyncing {
-                    if Date().timeIntervalSince(lastStatusRead) > 60 { await refreshWifiStatus() }
-                } else {
-                    Task { await syncWifi() }
+                if !wifiSyncing, wifiSyncDue {
+                    Task { await syncWifi() }      // reads the heartbeat as part of the check
+                } else if settings.wifiReady,
+                          Date().timeIntervalSince(lastStatusRead) > Self.heartbeatReadInterval(online: wifiOnline, failed: statusReadFailed) - 1 {
+                    await refreshWifiStatus()      // awaited here, so two reads never overlap
                 }
+                noteOnlineChange()
             }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
         }
     }
 
-    var statusKey: String?
+    /// Seconds between heartbeat reads. Quick while the pen is away, so it shows up soon after its screen comes on
+    /// (it beats right then); relaxed once it is online, where a beat only arrives every two minutes; backed off
+    /// after a failed read, so a Mac without network doesn't retry and log every few seconds.
+    nonisolated static func heartbeatReadInterval(online: Bool, failed: Bool) -> TimeInterval {
+        failed ? 60 : online ? 30 : 10
+    }
+
+    var statusKey: String? { didSet { if statusKey != oldValue { statusETag = nil } } }
+    /// ETag of the heartbeat as last read; sent along so an unchanged one isn't downloaded again.
+    var statusETag: String?
     var lastStatusRead = Date.distantPast
+    var statusReadFailed = false
+    /// Whether the pen counted as online at the last look.
+    var wasWifiOnline = false
 
     /// Reads just the heartbeat, stamped with the time OSS received it.
     func refreshWifiStatus() async {
         guard let k = statusKey, let oss = settings.macOSS() else { return }
         lastStatusRead = Date()
         do {
-            let (data, at) = try await oss.getWithDate(k)
-            var w = try JSONDecoder().decode(WifiStatus.self, from: data)
-            w.receivedAt = at
-            wifiStatus = w
-        } catch { Log.sync.error("读取心跳失败：\(error.localizedDescription, privacy: .public)") }
+            if let got = try await oss.getWithDate(k, unless: wifiStatus == nil ? nil : statusETag) {
+                var w = try JSONDecoder().decode(WifiStatus.self, from: got.data)
+                w.receivedAt = got.received
+                wifiStatus = w
+                statusETag = got.etag
+                Log.sync.debug("心跳：有新的")
+            } else {
+                Log.sync.debug("心跳：没有变化")
+            }
+            statusReadFailed = false
+        } catch {
+            statusReadFailed = true
+            Log.sync.error("读取心跳失败：\(error.localizedDescription, privacy: .public)")
+        }
+        noteOnlineChange()
+    }
+
+    /// Logs the moment the pen comes online or drops off (with both clock times, to see how long this Mac took
+    /// to notice) and redraws the status icons: going offline is only time passing, which publishes nothing.
+    func noteOnlineChange() {
+        let online = wifiOnline
+        guard online != wasWifiOnline else { return }
+        wasWifiOnline = online
+        objectWillChange.send()
+        let clock = DateFormatter.cached("HH:mm:ss")
+        let beat = wifiStatus?.seen.map { clock.string(from: $0) } ?? "—"
+        if online {
+            let lag = wifiStatus?.seen.map { Int(Date().timeIntervalSince($0).rounded()) } ?? -1
+            Log.sync.notice("录音笔上线：心跳 \(beat, privacy: .public) 到云端，\(clock.string(from: Date()), privacy: .public) 读到（隔 \(lag, privacy: .public) 秒）")
+        } else {
+            Log.sync.notice("录音笔离线：最后一次心跳 \(beat, privacy: .public)")
+        }
     }
 
     func animateIcon() async {

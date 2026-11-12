@@ -72,12 +72,20 @@ struct OSSClient {
         }
     }
 
-    /// The object plus when OSS received it (server clock, so the pen's own clock doesn't matter).
-    func getWithDate(_ key: String) async throws -> (Data, Date?) {
-        let (data, resp) = try await Self.session.data(for: request("GET", key: key))
+    /// The object, when OSS received it (server clock, so the pen's own clock doesn't matter) and its ETag.
+    /// Given the ETag from the last read, an object that hasn't changed since comes back as nil: OSS answers
+    /// 304 without a body, so the heartbeat can be looked at every few seconds without downloading it each time.
+    func getWithDate(_ key: String, unless etag: String? = nil) async throws -> (data: Data, received: Date?, etag: String?)? {
+        var r = request("GET", key: key)
+        // Asked for gzip (URLSession's default), OSS compresses JSON of 1 KB and up — and then sends no ETag.
+        r.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        if let etag { r.setValue(etag, forHTTPHeaderField: "If-None-Match") }   // neither is part of the V1 signature
+        let (data, resp) = try await Self.session.data(for: r)
+        let http = resp as? HTTPURLResponse
+        if etag != nil, http?.statusCode == 304 { return nil }
         try check(data, resp)
-        let lm = (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Last-Modified")
-        return (data, lm.flatMap { Self.dateFormatter.date(from: $0) })
+        return (data, http?.value(forHTTPHeaderField: "Last-Modified").flatMap { Self.dateFormatter.date(from: $0) },
+                http?.value(forHTTPHeaderField: "ETag"))
     }
 
     func get(_ key: String) async throws -> Data {

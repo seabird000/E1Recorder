@@ -7,10 +7,13 @@ import UserNotifications
 extension Pipeline {
     // MARK: WiFi mailbox
 
+    /// Whether the mailbox is due for its regular look (「WiFi 检查」 on the device page).
+    var wifiSyncDue: Bool { Date().timeIntervalSince(lastWifiSync) > Double(max(1, settings.wifiIntervalMin) * 60) }
+
     /// Fetches the heartbeat, downloads recordings the pen uploaded, queues them, then clears them from the mailbox.
     func syncWifi(force: Bool = false) async {
         guard !UIPreview.enabled, settings.wifiReady, !wifiSyncing, let oss = settings.macOSS() else { return }
-        guard force || Date().timeIntervalSince(lastWifiSync) > Double(max(1, settings.wifiIntervalMin) * 60) else { return }
+        guard force || wifiSyncDue else { return }
         wifiSyncing = true
         defer { wifiSyncing = false; lastWifiSync = Date(); lastWifiCheck = Date() }
         do {

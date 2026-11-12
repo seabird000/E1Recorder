@@ -2,7 +2,7 @@
 # Builds E1录音助手.app (universal: Apple silicon + Intel) and a drag-to-install .dmg.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION="${VERSION:-1.3.1}"
+VERSION="${VERSION:-1.3.2}"
 NAME="E1录音助手"
 APP="build/$NAME.app"
 
